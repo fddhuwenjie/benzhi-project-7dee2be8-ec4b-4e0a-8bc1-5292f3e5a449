@@ -52,6 +52,14 @@ func (t *VigorTrial) Clone() *VigorTrial {
 		decision.Report = t.ReleaseDecision.Report.Clone()
 		copy.ReleaseDecision = &decision
 	}
-	copy.SealedChecklist = t.SealedChecklist
+	if t.SealedChecklist != nil {
+		sealed := *t.SealedChecklist
+		sealed.Items = append([]string(nil), t.SealedChecklist.Items...)
+		copy.SealedChecklist = &sealed
+	}
+	if t.ReleasedAt != nil {
+		releasedAt := *t.ReleasedAt
+		copy.ReleasedAt = &releasedAt
+	}
 	return &copy
 }
