@@ -26,12 +26,39 @@ type TrialSummary struct {
 	OpenDeviations int                   `json:"open_deviations"`
 }
 
+func (s TrialSummary) Clone() TrialSummary {
+	out := s
+	if s.ByStatus != nil {
+		out.ByStatus = make(map[domain.Status]int, len(s.ByStatus))
+		for status, count := range s.ByStatus {
+			out.ByStatus[status] = count
+		}
+	}
+	return out
+}
+
 type TrialPage struct {
 	Trials  []*domain.VigorTrial `json:"trials"`
 	Total   int                  `json:"total"`
 	Offset  int                  `json:"offset"`
 	Limit   int                  `json:"limit"`
 	Summary TrialSummary         `json:"summary"`
+}
+
+// Clone returns a deep copy of the page so callers cannot mutate cached state
+// through the returned trials slice or status summary map.
+func (p TrialPage) Clone() TrialPage {
+	out := p
+	out.Summary = p.Summary.Clone()
+	if p.Trials != nil {
+		out.Trials = make([]*domain.VigorTrial, len(p.Trials))
+		for i, trial := range p.Trials {
+			if trial != nil {
+				out.Trials[i] = trial.Clone()
+			}
+		}
+	}
+	return out
 }
 
 func (s *Service) Query(filter TrialFilter) (TrialPage, error) {
@@ -44,7 +71,7 @@ func (s *Service) Query(filter TrialFilter) (TrialPage, error) {
 		return TrialPage{}, errors.New("limit 必须在 1 到 100 之间")
 	}
 	if page, ok := s.queries[filter]; ok {
-		return page, nil
+		return page.Clone(), nil
 	}
 	result := make([]*domain.VigorTrial, 0)
 	summary := TrialSummary{ByStatus: map[domain.Status]int{}}
@@ -83,8 +110,8 @@ func (s *Service) Query(filter TrialFilter) (TrialPage, error) {
 		}
 		page.Trials = result[filter.Offset:end]
 	}
-	s.queries[filter] = page
-	return page, nil
+	s.queries[filter] = page.Clone()
+	return page.Clone(), nil
 }
 
 func containsFold(value, query string) bool {
