@@ -43,7 +43,14 @@ func (s *Service) get(id string) (*domain.VigorTrial, error) { return s.st.Get(i
 // intentionally accepted here so request lifetime can be propagated through
 // the application boundary.
 func (s *Service) CreateContext(ctx context.Context, seed, crop, owner string, groups []string, actor, role, req string) (*domain.VigorTrial, error) {
-	// BUG: cancellation is ignored and the operation always reaches Create/commit.
+	// Honor request cancellation before any mutation: a cancelled request must
+	// surface a cancellation error and must not reach the commit/Save path, so
+	// no batch or audit record is persisted.
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	return s.Create(seed, crop, owner, groups, actor, role, req)
 }
 
