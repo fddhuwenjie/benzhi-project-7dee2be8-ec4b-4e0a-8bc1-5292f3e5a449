@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -122,7 +123,16 @@ func (x protocolRequest) protocol() domain.Protocol {
 func decode(r *http.Request, v any) error {
 	d := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
 	d.DisallowUnknownFields()
-	return d.Decode(v)
+	if err := d.Decode(v); err != nil {
+		return err
+	}
+	// 拒绝首个顶层 JSON 值之后的第二个对象或任何非空白尾随内容，
+	// 避免应用层在未察觉的情况下基于首个值提交持久化状态。
+	var extra json.RawMessage
+	if err := d.Decode(&extra); err != io.EOF {
+		return errors.New("请求体只能包含一个 JSON 对象")
+	}
+	return nil
 }
 func (s *Server) CreateTrial(w http.ResponseWriter, r *http.Request) {
 	var x struct {
