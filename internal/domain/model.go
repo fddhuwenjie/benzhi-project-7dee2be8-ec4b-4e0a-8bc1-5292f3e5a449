@@ -142,6 +142,7 @@ type VigorTrial struct {
 
 var ErrConflict = errors.New("revision conflict")
 var ErrInvalidTransition = errors.New("invalid status transition")
+var ErrRequestConflict = errors.New("request_id conflict")
 
 func (t *VigorTrial) Transition(next Status) error {
 	valid := map[Status]map[Status]bool{Draft: {ProtocolLocked: true}, ProtocolLocked: {ExposureRecorded: true}, ExposureRecorded: {Counting: true}, Counting: {Reviewed: true}, Reviewed: {Released: true}, Released: {Archived: true}}

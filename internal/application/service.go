@@ -37,23 +37,60 @@ func authorize(actor, role string, allowed ...string) error {
 
 func New(st *store.Store) *Service                           { return &Service{st: st, results: map[string]*domain.VigorTrial{}} }
 func (s *Service) get(id string) (*domain.VigorTrial, error) { return s.st.Get(id) }
-func (s *Service) replay(requestID string) (*domain.VigorTrial, bool) {
+
+// replay decides whether a request_id corresponds to a prior, successfully
+// committed command. A replay is only valid when the request_id, the target
+// resource (trial id, plus optional sub-resource such as a deviation id) and the
+// operation (audit event type) all match the original command. Reusing an
+// existing request_id for a different resource or operation is a conflict and
+// must not bypass authorization or resource validation.
+func (s *Service) replay(requestID, trialID, operation string) (*domain.VigorTrial, bool, error) {
 	if requestID == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	if t, ok := s.results[requestID]; ok {
-		return t, true
+		if matchesScope(t, requestID, trialID, operation) {
+			return t, true, nil
+		}
+		return nil, false, conflictError(requestID)
 	}
 	for _, t := range s.st.List() {
 		for _, event := range t.Audit {
 			if event.RequestID == requestID {
 				s.results[requestID] = t
-				return t, true
+				if matchesScope(t, requestID, trialID, operation) {
+					return t, true, nil
+				}
+				return nil, false, conflictError(requestID)
 			}
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
+
+// matchesScope reports whether the recorded audit event for requestID targets
+// the same trial and operation as the incoming command. The trial id is empty
+// for create-style commands where the resource does not yet exist.
+func matchesScope(t *domain.VigorTrial, requestID, trialID, operation string) bool {
+	for _, event := range t.Audit {
+		if event.RequestID != requestID {
+			continue
+		}
+		if event.Type != operation {
+			return false
+		}
+		if trialID != "" && t.ID != trialID {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func conflictError(requestID string) error {
+	return fmt.Errorf("%w: request_id %s 已用于其他资源或操作", domain.ErrRequestConflict, requestID)
+}
+
 func (s *Service) commit(t *domain.VigorTrial, actor, req, typ string, data map[string]any) (*domain.VigorTrial, error) {
 	if req == "" {
 		return nil, errors.New("request_id 必填")
@@ -75,7 +112,9 @@ func (s *Service) check(t *domain.VigorTrial, rev int) error {
 func (s *Service) Create(seed, crop, owner string, groups []string, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, "", "TRIAL_CREATED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleTechnician); err != nil {
@@ -114,7 +153,9 @@ func (s *Service) PreflightProtocol(id string, p domain.Protocol, rev int) (doma
 func (s *Service) LockProtocolConfirmed(id string, p domain.Protocol, rev int, summary, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "PROTOCOL_LOCKED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleLead); err != nil {
@@ -153,7 +194,9 @@ func (s *Service) LockProtocolConfirmed(id string, p domain.Protocol, rev int, s
 func (s *Service) RecordExposure(id string, x domain.Exposure, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if saved, ok := s.replay(req); ok {
+	if saved, ok, err := s.replay(req, id, "EXPOSURE_RECORDED"); err != nil {
+		return nil, err
+	} else if ok {
 		return saved, nil
 	}
 	if err := authorize(actor, role, RoleTechnician); err != nil {
@@ -201,7 +244,9 @@ func (s *Service) RecordExposure(id string, x domain.Exposure, rev int, actor, r
 func (s *Service) SubmitRound(id string, r domain.GerminationRound, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "ROUND_SUBMITTED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleTechnician); err != nil {
@@ -237,7 +282,9 @@ func (s *Service) SubmitRound(id string, r domain.GerminationRound, rev int, act
 func (s *Service) CorrectRound(id, group string, roundNo, normal, abnormal, ungerminated int, reason, evidence string, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "ROUND_CORRECTED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleTechnician); err != nil {
@@ -263,7 +310,9 @@ func (s *Service) CorrectRound(id, group string, roundNo, normal, abnormal, unge
 func (s *Service) ReportDeviation(id string, d domain.DeviationCase, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "DEVIATION_REPORTED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleTechnician); err != nil {
@@ -293,7 +342,9 @@ func (s *Service) ReportDeviation(id string, d domain.DeviationCase, rev int, ac
 func (s *Service) ReviewCounts(id, reviewer string, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "COUNTS_REVIEWED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleReviewer); err != nil {
@@ -330,7 +381,9 @@ func (s *Service) ReviewCounts(id, reviewer string, rev int, actor, role, req st
 func (s *Service) ReviewDeviation(id, devID, decision, rootCause, disposition, reviewer string, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "DEVIATION_REVIEWED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleReviewer); err != nil {
@@ -397,7 +450,9 @@ func (s *Service) ReviewDeviation(id, devID, decision, rootCause, disposition, r
 func (s *Service) RemediateDeviation(id, devID, rootCause, disposition, evidence string, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "DEVIATION_REMEDIATED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleTechnician); err != nil {
@@ -444,7 +499,9 @@ func (s *Service) RemediateDeviation(id, devID, rootCause, disposition, evidence
 func (s *Service) Release(id string, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "TRIAL_RELEASED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleLead); err != nil {
@@ -482,7 +539,9 @@ func (s *Service) Release(id string, rev int, actor, role, req string) (*domain.
 func (s *Service) Archive(id string, rev int, actor, role, req string) (*domain.VigorTrial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, ok := s.replay(req); ok {
+	if x, ok, err := s.replay(req, id, "TRIAL_ARCHIVED"); err != nil {
+		return nil, err
+	} else if ok {
 		return x, nil
 	}
 	if err := authorize(actor, role, RoleLead); err != nil {

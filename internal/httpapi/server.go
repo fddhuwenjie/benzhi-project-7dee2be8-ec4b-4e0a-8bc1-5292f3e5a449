@@ -529,6 +529,9 @@ func fail(w http.ResponseWriter, e error) {
 	if errors.Is(e, domain.ErrConflict) {
 		code = 409
 		key = "REVISION_CONFLICT"
+	} else if errors.Is(e, domain.ErrRequestConflict) {
+		code = 409
+		key = "REQUEST_CONFLICT"
 	} else if errors.Is(e, os.ErrNotExist) {
 		code = 404
 		key = "NOT_FOUND"

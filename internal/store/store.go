@@ -15,11 +15,11 @@ type Store struct {
 	dir      string
 	mu       sync.RWMutex
 	trials   map[string]*domain.VigorTrial
-	requests map[string]any
+	requests map[string]domain.AuditEvent
 }
 
 func New(dir string) (*Store, error) {
-	s := &Store{dir: dir, trials: map[string]*domain.VigorTrial{}, requests: map[string]any{}}
+	s := &Store{dir: dir, trials: map[string]*domain.VigorTrial{}, requests: map[string]domain.AuditEvent{}}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (s *Store) List() []*domain.VigorTrial {
 	}
 	return out
 }
-func (s *Store) Seen(request string) (any, bool) {
+func (s *Store) Seen(request string) (domain.AuditEvent, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	v, ok := s.requests[request]
@@ -84,13 +84,17 @@ func (s *Store) Save(t *domain.VigorTrial, request string) error {
 	defer s.mu.Unlock()
 	if request != "" {
 		if _, ok := s.requests[request]; ok {
-			return nil
+			return domain.ErrRequestConflict
 		}
 	}
 	previous, existed := s.trials[t.ID]
 	s.trials[t.ID] = t.Clone()
 	if request != "" {
-		s.requests[request] = true
+		if event := requestEvent(t, request); event.Type != "" {
+			s.requests[request] = *event
+		} else {
+			s.requests[request] = domain.AuditEvent{Type: t.Audit[len(t.Audit)-1].Type, RequestID: request}
+		}
 	}
 	if err := s.persistLocked(); err != nil {
 		if existed {
@@ -100,6 +104,16 @@ func (s *Store) Save(t *domain.VigorTrial, request string) error {
 		}
 		delete(s.requests, request)
 		return err
+	}
+	return nil
+}
+
+// requestEvent returns the audit event for the given request id, or nil if none.
+func requestEvent(t *domain.VigorTrial, request string) *domain.AuditEvent {
+	for i := range t.Audit {
+		if t.Audit[i].RequestID == request {
+			return &t.Audit[i]
+		}
 	}
 	return nil
 }
