@@ -87,28 +87,54 @@ func (s *Store) Save(t *domain.VigorTrial, request string) error {
 			return nil
 		}
 	}
-	s.trials[t.ID] = t.Clone()
+	clone := t.Clone()
+	previous, hadPrevious := s.trials[t.ID]
+	s.trials[t.ID] = clone
 	if request != "" {
 		s.requests[request] = true
 	}
-	if err := s.persistLocked(); err != nil {
+	snapshotWritten, err := s.persistLocked()
+	if err != nil {
+		if !snapshotWritten {
+			// The snapshot itself could not be replaced, so the on-disk state
+			// is unchanged. Roll back the in-memory mutation so the failed
+			// batch is neither queryable nor replayable; otherwise a retry
+			// with the same request_id would return a phantom result that was
+			// never persisted, and the batch would vanish after a restart.
+			if hadPrevious {
+				s.trials[t.ID] = previous
+			} else {
+				delete(s.trials, t.ID)
+			}
+			if request != "" {
+				delete(s.requests, request)
+			}
+		}
 		return err
 	}
 	return nil
 }
-func (s *Store) persistLocked() error {
+
+// persistLocked writes the snapshot and reconciles the append-only audit log.
+// The bool result reports whether the snapshot was durably written to disk;
+// when false the on-disk snapshot is unchanged and callers must roll back any
+// in-memory mutation that preceded the call.
+func (s *Store) persistLocked() (bool, error) {
 	xs := make([]*domain.VigorTrial, 0, len(s.trials))
 	for _, x := range s.trials {
 		xs = append(xs, x)
 	}
 	b, err := json.MarshalIndent(xs, "", "  ")
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err = atomicWrite(s.path(), b, 0644); err != nil {
-		return err
+		return false, err
 	}
-	return s.recoverAuditLocked()
+	if err = s.recoverAuditLocked(); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 func (s *Store) Timeline(id string) ([]domain.AuditEvent, error) {
 	t, e := s.Get(id)
