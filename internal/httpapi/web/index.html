@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>种子活力复核放行工作台</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header><div><b>种质质量中心</b><span>种子活力复核放行工作台</span></div><button id="refresh" title="刷新批次">刷新</button></header>
+  <main>
+    <aside>
+      <div class="aside-title"><h1>复核批次</h1><button id="newTrial">＋ 新建批次</button></div>
+      <form id="filters" class="filters">
+        <label>种子批号<input name="seed_lot_code"></label>
+        <label>目标作物<input name="crop_name"></label>
+        <label>负责人<input name="owner"></label>
+        <label>当前状态<select name="status"><option value="">全部状态</option><option value="DRAFT">方案待锁定</option><option value="PROTOCOL_LOCKED">待登记老化条件</option><option value="EXPOSURE_RECORDED">待提交计数</option><option value="COUNTING">计数与偏差复核</option><option value="REVIEWED">质量门禁待签发</option><option value="RELEASED">待封存</option><option value="ARCHIVED">已封存</option></select></label>
+        <div class="filter-actions"><button>查询</button><button type="button" id="clearFilters">清空</button></div>
+      </form>
+      <div id="summary" class="summary"></div><div id="trialList"></div>
+      <div class="pager"><button id="prevPage" title="上一页">←</button><span id="pageInfo"></span><button id="nextPage" title="下一页">→</button></div>
+    </aside>
+    <section id="workspace"><div class="empty"><strong>选择一个复核批次</strong><p>在左侧新建或选择批次，查看试验方案、条件、计数、门禁与审计记录。</p></div></section>
+  </main>
+  <dialog id="createDialog"><form method="dialog" id="createForm"><h2>创建活力复核批次</h2><label>种子批号<input name="seed_lot_code" required></label><label>目标作物<input name="crop_name" required></label><label>负责人<input name="owner" required></label><label>样本分组<input name="groups" value="A组" required><small>多个分组用英文逗号分隔</small></label><div class="actions"><button value="cancel">取消</button><button value="default" id="submitCreate">创建</button></div></form></dialog>
+  <script src="/assets/app.js"></script>
+</body>
+</html>
